@@ -1,0 +1,9 @@
+{
+  "name": "finwise-backend",
+  "version": "2.0.0",
+  "description": "FinWise AI Backend Server Launcher",
+  "scripts": {
+    "dev": "python main.py",
+    "start": "python main.py"
+  }
+}
