@@ -15,6 +15,11 @@ const API_BASE_URL = getApiBaseUrl();
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  },
+  timeout: 60000,
 });
 
 export const api = {
@@ -68,8 +73,19 @@ export const api = {
 
   // 8. Compare Multiple Loans
   async compareLoans(docIds = []) {
-    const response = await apiClient.post('/api/compare', { doc_ids: docIds });
-    return response.data;
+    const payload = { doc_ids: Array.isArray(docIds) ? docIds : [] };
+    const headers = { 'Content-Type': 'application/json' };
+    try {
+      const response = await apiClient.post('/api/compare', payload, { headers });
+      return response.data;
+    } catch (err) {
+      if (err.response && err.response.status === 404) {
+        // Fallback to /compare route alias if /api/compare returns 404
+        const fallbackRes = await apiClient.post('/compare', payload, { headers });
+        return fallbackRes.data;
+      }
+      throw err;
+    }
   },
 
   // 9. RAG Chat Assistant

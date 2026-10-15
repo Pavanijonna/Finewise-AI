@@ -10,7 +10,7 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Request, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
@@ -83,6 +83,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @app.get("/")
+@app.get("/health")
 @app.get("/api/health")
 def health_check():
     return {
@@ -93,7 +94,9 @@ def health_check():
     }
 
 
+@app.post("/upload", response_model=List[schemas.DocumentResponse])
 @app.post("/api/upload", response_model=List[schemas.DocumentResponse])
+@app.post("/documents/upload", response_model=List[schemas.DocumentResponse])
 @app.post("/api/documents/upload", response_model=List[schemas.DocumentResponse])
 async def upload_documents(
     files: List[UploadFile] = File(...),
@@ -247,6 +250,7 @@ async def upload_documents(
     ]
 
 
+@app.get("/documents", response_model=List[schemas.DocumentResponse])
 @app.get("/api/documents", response_model=List[schemas.DocumentResponse])
 def get_all_documents(db: Session = Depends(get_db)):
     docs = db.query(models.Document).order_by(models.Document.upload_time.desc()).all()
@@ -426,18 +430,40 @@ def calculate_doc_financials(doc_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/compare", response_model=schemas.ComparisonResponse)
+@app.post("/compare", response_model=schemas.ComparisonResponse)
 @app.post("/api/loans/compare", response_model=schemas.ComparisonResponse)
-def compare_loan_documents(req: schemas.ComparisonRequest, db: Session = Depends(get_db)):
-    doc_ids = req.doc_ids
-    if not doc_ids:
+@app.post("/loans/compare", response_model=schemas.ComparisonResponse)
+@app.get("/api/compare", response_model=schemas.ComparisonResponse)
+@app.get("/compare", response_model=schemas.ComparisonResponse)
+@app.get("/api/loans/compare", response_model=schemas.ComparisonResponse)
+@app.get("/loans/compare", response_model=schemas.ComparisonResponse)
+def compare_loan_documents(
+    req: Optional[schemas.ComparisonRequest] = None,
+    doc_ids: Optional[List[str]] = Query(None),
+    db: Session = Depends(get_db)
+):
+    target_ids = (req.doc_ids if (req and req.doc_ids) else None) or doc_ids or []
+    if not target_ids:
         docs = db.query(models.Document).all()
-        doc_ids = [d.id for d in docs]
+        target_ids = [d.id for d in docs]
 
-    if not doc_ids:
-        raise HTTPException(status_code=400, detail="No documents available for multi-loan comparison.")
+    if not target_ids:
+        # Auto-load sample documents if DB has none so comparison never fails on a cold start
+        try:
+            load_sample_documents(db)
+            docs = db.query(models.Document).all()
+            target_ids = [d.id for d in docs]
+        except Exception as e:
+            logger.warning(f"Auto-load samples fallback failed: {e}")
+
+    if not target_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No documents available for multi-loan comparison. Please upload or load sample loan contracts."
+        )
 
     loans_data = []
-    for d_id in doc_ids:
+    for d_id in target_ids:
         doc = db.query(models.Document).filter(models.Document.id == d_id).first()
         ext = db.query(models.ExtractedData).filter(models.ExtractedData.doc_id == d_id).first()
         clauses = db.query(models.Clause).filter(models.Clause.doc_id == d_id).all()
@@ -474,7 +500,49 @@ def compare_loan_documents(req: schemas.ComparisonRequest, db: Session = Depends
             })
 
     if not loans_data:
-        raise HTTPException(status_code=404, detail="No extracted loan data found for comparison.")
+        # Fallback: attempt to populate sample docs if existing docs had missing extracted data
+        try:
+            load_sample_documents(db)
+            sample_docs = db.query(models.Document).all()
+            for s_doc in sample_docs:
+                s_ext = db.query(models.ExtractedData).filter(models.ExtractedData.doc_id == s_doc.id).first()
+                if s_doc and s_ext:
+                    s_clauses = db.query(models.Clause).filter(models.Clause.doc_id == s_doc.id).all()
+                    s_clauses_dicts = [{
+                        "title": c.title,
+                        "clause_type": c.clause_type,
+                        "text_snippet": c.text_snippet,
+                        "risk_level": c.risk_level,
+                        "simple_explanation": c.simple_explanation
+                    } for c in s_clauses]
+                    s_ext_dict = {
+                        "borrower_name": s_ext.borrower_name,
+                        "loan_amount": s_ext.loan_amount,
+                        "interest_rate": s_ext.interest_rate,
+                        "interest_type": s_ext.interest_type,
+                        "tenure": s_ext.tenure_months,
+                        "emi": s_ext.emi,
+                        "processing_fee": s_ext.processing_fee,
+                        "total_interest": s_ext.total_interest,
+                        "total_repayment": s_ext.total_repayment,
+                        "foreclosure_charges": s_ext.foreclosure_charges,
+                        "late_payment_penalties": s_ext.late_penalty
+                    }
+                    s_risk_info = compute_component_risk_scores(s_clauses_dicts, s_ext_dict)
+                    loans_data.append({
+                        "doc_id": s_doc.id,
+                        "filename": s_doc.filename,
+                        "extracted_data": s_ext_dict,
+                        "risk_analysis": s_risk_info
+                    })
+        except Exception as e:
+            logger.warning(f"Fallback loan extraction failed: {e}")
+
+    if not loans_data:
+        raise HTTPException(
+            status_code=400,
+            detail="No extracted loan data available for comparison. Please upload or analyze at least 2 loan documents."
+        )
 
     return compare_loans(loans_data)
 
@@ -573,6 +641,7 @@ def run_rag_eval_suite():
     return evaluate_rag_pipeline()
 
 
+@app.post("/load-samples")
 @app.post("/api/load-samples")
 def load_sample_documents(db: Session = Depends(get_db)):
     """

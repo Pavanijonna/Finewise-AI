@@ -113,6 +113,8 @@ export default function App() {
           <ComparisonView
             documents={documents}
             onSelectDoc={(id) => { setSelectedDocId(id); setActiveTab('dashboard'); }}
+            onLoadSamples={handleLoadSamples}
+            loadingSamples={loadingSamples}
           />
         )}
 

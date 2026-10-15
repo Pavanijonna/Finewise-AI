@@ -1,15 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { GitCompare, Trophy, Award, DollarSign, ShieldCheck, CheckCircle, AlertTriangle, ArrowRight } from 'lucide-react';
+import { GitCompare, Trophy, Award, DollarSign, ShieldCheck, CheckCircle, AlertTriangle, ArrowRight, Clock, Sparkles, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 
-export default function ComparisonView({ documents, onSelectDoc }) {
+export default function ComparisonView({ documents, onSelectDoc, onLoadSamples, loadingSamples }) {
   const [comparisonData, setComparisonData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
     runComparison();
   }, [documents]);
+
+  useEffect(() => {
+    let timer;
+    if (loading) {
+      setElapsedSeconds(0);
+      timer = setInterval(() => {
+        setElapsedSeconds(prev => prev + 1);
+      }, 1000);
+    } else {
+      setElapsedSeconds(0);
+    }
+    return () => clearInterval(timer);
+  }, [loading]);
 
   const runComparison = async () => {
     if (documents.length === 0) return;
@@ -20,7 +34,8 @@ export default function ComparisonView({ documents, onSelectDoc }) {
       const res = await api.compareLoans(docIds);
       setComparisonData(res);
     } catch (err) {
-      setError('Failed to compute multi-loan comparison matrix.');
+      const detail = err.response?.data?.detail || err.message || 'Failed to compute multi-loan comparison matrix.';
+      setError(detail);
     } finally {
       setLoading(false);
     }
@@ -31,27 +46,85 @@ export default function ComparisonView({ documents, onSelectDoc }) {
       <div className="glass-card animate-fade-in" style={{ margin: '2rem 0', textAlign: 'center', padding: '3rem' }}>
         <GitCompare size={48} color="#38bdf8" />
         <h3 style={{ marginTop: '1rem' }}>Multi-Loan Comparison Engine</h3>
-        <p className="text-muted" style={{ maxWidth: '550px', margin: '0.5rem auto' }}>
-          Upload at least 2 loan documents (or click <strong>"Load Sample Docs"</strong> in the navbar) to compare interest rates, EMIs, total repayment costs, risk scores, and view automated AI ranking.
+        <p className="text-muted" style={{ maxWidth: '550px', margin: '0.5rem auto 1.5rem' }}>
+          Upload at least 2 loan documents (or click <strong>"Load Sample Docs"</strong>) to compare interest rates, EMIs, total repayment costs, risk scores, and view automated AI ranking.
         </p>
+        {onLoadSamples && (
+          <button
+            className="btn btn-primary"
+            onClick={onLoadSamples}
+            disabled={loadingSamples}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <Sparkles size={16} />
+            <span>{loadingSamples ? 'Loading Sample Contracts...' : 'Load Sample Docs for Comparison'}</span>
+          </button>
+        )}
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="glass-card text-center" style={{ padding: '3rem' }}>
-        <div className="spinner"></div>
-        <p style={{ marginTop: '1rem' }}>Running multi-criteria financial comparison matrix & risk ranking...</p>
+      <div className="glass-card text-center animate-fade-in" style={{ padding: '3.5rem 2rem', margin: '2rem 0' }}>
+        <div className="spinner" style={{ margin: '0 auto 1.5rem' }}></div>
+        <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#f8fafc', marginBottom: '0.5rem' }}>
+          Running Multi-Loan Comparison Matrix & Risk Ranking
+        </h3>
+        <p className="text-muted" style={{ maxWidth: '520px', margin: '0 auto 1.5rem', fontSize: '0.95rem' }}>
+          Evaluating effective interest rates, hidden fee clauses, and calculating composite ranking scores across {documents.length} contracts.
+        </p>
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '0.6rem',
+          background: 'rgba(56, 189, 248, 0.1)',
+          border: '1px solid rgba(56, 189, 248, 0.3)',
+          padding: '0.6rem 1.25rem',
+          borderRadius: '24px',
+          color: '#38bdf8',
+          fontSize: '0.88rem'
+        }}>
+          <Clock size={16} className="animate-pulse" />
+          <span>
+            {elapsedSeconds > 3
+              ? `Waking up server, this may take up to 45s on free tier (${elapsedSeconds}s elapsed)...`
+              : `Processing documents (${elapsedSeconds}s)... Initial requests may take up to 45s if the server was sleeping.`}
+          </span>
+        </div>
       </div>
     );
   }
 
   if (error || !comparisonData) {
     return (
-      <div className="glass-card" style={{ margin: '2rem 0' }}>
-        <AlertTriangle size={36} color="#f43f5e" />
-        <p>{error || 'No comparison data generated.'}</p>
+      <div className="glass-card text-center animate-fade-in" style={{ margin: '2rem 0', padding: '3rem 2rem' }}>
+        <AlertTriangle size={44} color="#f43f5e" style={{ margin: '0 auto 1rem' }} />
+        <h4 style={{ color: '#f43f5e', marginBottom: '0.5rem', fontSize: '1.15rem' }}>Comparison Notice</h4>
+        <p className="text-muted" style={{ maxWidth: '500px', margin: '0 auto 1.5rem' }}>
+          {error || 'No comparison data generated.'}
+        </p>
+        <div style={{ display: 'inline-flex', gap: '1rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+          <button
+            className="btn btn-outline"
+            onClick={runComparison}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <RefreshCw size={16} />
+            <span>Retry Comparison</span>
+          </button>
+          {onLoadSamples && (
+            <button
+              className="btn btn-primary"
+              onClick={onLoadSamples}
+              disabled={loadingSamples}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <Sparkles size={16} />
+              <span>{loadingSamples ? 'Loading...' : 'Load Sample Docs'}</span>
+            </button>
+          )}
+        </div>
       </div>
     );
   }
